@@ -132,3 +132,10 @@ You are an expert financial advisor chatbot named "Clau". Your goal is to provid
     # answer = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
 
     # return {"answer": answer}
+
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
