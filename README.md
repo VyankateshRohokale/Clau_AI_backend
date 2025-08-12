@@ -208,6 +208,37 @@ The chatbot handles these assessment questions effectively:
 - Check for appropriate disclaimers on investment advice
 - See `TEST_SUITE.md` for detailed test cases and expected responses
 
+## 🛠️ Development Decisions & Challenges Overcome
+
+### Architecture Choices
+- **FastAPI Framework**: Selected for high performance, automatic API documentation, and modern Python async support
+- **Pydantic Models**: Ensures type safety and automatic request validation for robust API design
+- **Environment Configuration**: Secure API key management using python-dotenv for production safety
+- **CORS Middleware**: Enables seamless frontend-backend communication across different domains
+
+### Challenges Overcome
+1. **Prompt Engineering Complexity**: Developed a comprehensive 23-instruction system prompt to ensure consistent, professional financial advice across all queries
+2. **Response Formatting**: Implemented rich markdown formatting with tables, headers, and visual cards for enhanced readability
+3. **Error Handling**: Created robust error handling for API failures, timeouts, and invalid responses with user-friendly messages
+4. **API Integration**: Successfully integrated with Gemini 2.5 Flash API using proper authentication and request formatting
+5. **Production Deployment**: Configured secure environment variables and CORS policies for live deployment
+
+## 🔮 Future Improvements
+
+### Planned Features
+1. **User Authentication**: Implement user accounts for personalized financial tracking and conversation history
+2. **Financial Calculators**: Add built-in calculators for loans, investments, retirement planning, and mortgage calculations
+3. **Document Analysis**: Enable users to upload financial documents (bank statements, tax forms) for AI analysis
+4. **Multi-language Support**: Expand to support Spanish, French, and other languages for broader accessibility
+5. **Voice Interface**: Integrate speech-to-text and text-to-speech for hands-free financial consultations
+
+### Technical Enhancements
+1. **Caching Layer**: Implement Redis caching for common financial queries to improve response times
+2. **Rate Limiting**: Add API rate limiting and usage analytics for production scalability
+3. **Database Integration**: Add PostgreSQL for user data, conversation history, and financial goal tracking
+4. **Advanced Analytics**: Implement user behavior analytics and A/B testing for prompt optimization
+5. **Microservices Architecture**: Split into specialized services for different financial domains (investments, loans, budgeting)
+
 ## 🤖 Prompt Engineering Documentation
 
 Detailed prompt engineering techniques used with Gemini API are documented in `PROMPT_ENGINEERING.md`, including:
