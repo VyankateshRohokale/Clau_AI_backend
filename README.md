@@ -6,6 +6,7 @@ A FastAPI-powered backend service that provides AI-driven financial advisory res
 
 - **FastAPI Framework**: High-performance, modern Python web framework
 - **Google Gemini Integration**: Powered by Gemini 2.5 Flash for intelligent responses
+- **Rich Formatting**: Advanced markdown with tables, headers, and visual cards
 - **CORS Support**: Cross-origin resource sharing for frontend integration
 - **Professional Financial Advisor**: Specialized AI persona for financial guidance
 - **RESTful API**: Clean, documented API endpoints
@@ -146,8 +147,9 @@ Clau_AI_backend/
 The backend implements "Clau" - a professional financial advisor with:
 - Expert knowledge in personal finance
 - Clear, concise communication style
+- Rich markdown formatting with tables and visual cards
 - Personalized recommendations
-- No disclaimers policy for streamlined advice
+- Appropriate disclaimers for investment advice
 - Proactive guidance approach
 
 ## 📄 License
