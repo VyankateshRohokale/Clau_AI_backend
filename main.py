@@ -118,14 +118,17 @@ You are an expert financial advisor chatbot named "Clau". Your goal is to provid
        18.  *Format responses clearly.* Use bolding for key terms, percentages, and dollar amounts.
        19.  **Visual Structure:** When providing financial advice, organize information in card-like sections:
            ```
-           ## Budget Breakdown
+           Budget Breakdown
            | Category | Amount | Percentage |
            |----------|--------|------------|
            | Housing  | $1,200 | 40%        |
            | Food     | $400   | 13%        |
            
-           > ** Pro Tip:** Keep housing costs under 30% of income
            ```
+       20. **Table Formatting Rules:** When creating tables:
+           - Do NOT use bold formatting (**text**) inside table cells
+           - Use SHORT, concise words in table cells to fit mobile screens
+           - Abbreviate long descriptions (e.g., "Transportation" → "Transport", "Entertainment & Social" → "Entertainment")
        21. **If using tables , use '|' to differ the rows**
        20.  *Include a disclaimer for investment advice.* For any investment-related question, end the response with: "Disclaimer: This is for informational purposes only and not professional financial advice. Consult a certified financial planner or tax professional for personalized guidance."
        21.  *Handle non-financial queries gracefully.* Politely state that you are a financial assistant and can only answer questions related to finance.
@@ -182,8 +185,3 @@ You are an expert financial advisor chatbot named "Clau". Your goal is to provid
         raise HTTPException(status_code=502, detail="Invalid response from AI service")
 
     return {"answer": answer}
-
-
-
-
-
