@@ -152,6 +152,28 @@ The backend implements "Clau" - a professional financial advisor with:
 - Appropriate disclaimers for investment advice
 - Proactive guidance approach
 
+## 🧪 Testing
+
+```bash
+# Install test dependencies
+pip install -r requirements-test.txt
+
+# Run all tests
+pytest test_main.py -v
+
+# Run specific test
+pytest test_main.py::test_ask_success -v
+
+# Run tests with coverage
+pytest test_main.py --cov=main
+```
+
 ## 📄 License
 
 This project is licensed under the MIT License.
+
+## 🚀 Live Demo
+
+**API Endpoint**: [https://clau-ai-backend.onrender.com](https://clau-ai-backend.onrender.com)
+**Interactive Docs**: [https://clau-ai-backend.onrender.com/docs](https://clau-ai-backend.onrender.com/docs)
+**Frontend**: [https://financialadvisorychatbot.vercel.app/](https://financialadvisorychatbot.vercel.app/)
