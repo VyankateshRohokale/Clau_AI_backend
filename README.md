@@ -168,6 +168,57 @@ pytest test_main.py::test_ask_success -v
 pytest test_main.py --cov=main
 ```
 
+## 📋 Sample Financial Questions Test Suite
+
+The chatbot handles these assessment questions effectively:
+
+1. **"What is the difference between a Roth IRA and a Traditional IRA?"**
+   - Expected: Tax treatment comparison, contribution limits, withdrawal rules
+
+2. **"How should I allocate my 401(k) investments?"**
+   - Expected: Age-based allocation, risk tolerance, diversification strategies
+
+3. **"What's a good debt-to-income ratio?"**
+   - Expected: Specific percentage ranges (28/36 rule), impact on financial health
+
+4. **"How do I create an emergency fund?"**
+   - Expected: Step-by-step process, 3-6 months expenses, high-yield savings
+
+5. **"Should I pay off my student loans or invest in the stock market?"**
+   - Expected: Interest rate comparison, risk analysis, balanced approach
+
+6. **"What is dollar-cost averaging?"**
+   - Expected: Definition, benefits, implementation strategy with examples
+
+7. **"How do interest rate changes affect my mortgage?"**
+   - Expected: Fixed vs variable rates, refinancing considerations
+
+8. **"What's the rule of 72?"**
+   - Expected: Formula explanation, doubling time calculations, practical examples
+
+9. **"How much should I save for retirement?"**
+   - Expected: 10-15% rule, employer matching, compound interest benefits
+
+10. **"What are current market trends affecting tech stocks?"**
+    - Expected: General market factors, sector analysis, investment considerations
+
+**Testing Instructions:**
+- Use the live demo or local setup to test these questions
+- Verify responses include tables, headers, and **Final Recommendation** format
+- Check for appropriate disclaimers on investment advice
+- See `TEST_SUITE.md` for detailed test cases and expected responses
+
+## 🤖 Prompt Engineering Documentation
+
+Detailed prompt engineering techniques used with Gemini API are documented in `PROMPT_ENGINEERING.md`, including:
+
+- **System Prompt Architecture**: 23-instruction framework for consistent financial advice
+- **Advanced Techniques**: Negative prompting, few-shot learning, chain-of-thought prompting
+- **Response Quality Optimization**: Behavioral conditioning and format specifications
+- **Visual Structure**: Markdown formatting with tables, headers, and cards
+- **Constraint-Based Prompting**: Role definition, domain boundaries, and behavioral rules
+- **Multi-Modal Instruction Layering**: Identity, capability, behavioral, and format instructions
+
 ## 📄 License
 
 This project is licensed under the MIT License.
