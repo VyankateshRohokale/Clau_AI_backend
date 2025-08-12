@@ -1,7 +1,15 @@
 # Last change by Vyankatesh Rohokale on 12/08/2025 (dd/mm/yyyy)
 
+"""
+Clau - Financial Advisory Chatbot Backend
 
-#Imports
+A FastAPI-powered backend service that provides AI-driven financial advisory 
+responses using Google Gemini 2.5 Flash API. This service acts as an intermediary
+between the frontend chat interface and Google's Gemini API, adding specialized
+financial advisor prompting and response formatting.
+"""
+
+# Core framework and HTTP handling
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import requests
@@ -10,41 +18,67 @@ from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 
-# Load API Key
+# Load environment variables - API key is required for Gemini integration
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-app = FastAPI()
+# Initialize FastAPI application with metadata
+app = FastAPI(
+    title="Clau Financial Advisory API",
+    description="AI-powered financial advisory chatbot backend",
+    version="1.0.0"
+)
 
-# Allow all origins for local development (CORS fix)
+# Configure CORS to allow frontend communication
+# In production, this should be restricted to specific origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],  # TODO: Restrict to specific domains in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# sending a request to Gemini API
+
+# Pydantic models for request/response validation
 class Message(BaseModel):
-    role: str
-    parts: List[dict]
+    """Represents a single message in the conversation history"""
+    role: str  # 'user' or 'model' (Gemini's expected format)
+    parts: List[dict]  # Message content parts
 
-
-# Request model for the chat
 class ChatRequest(BaseModel):
-    contents: List[Message]
+    """Request payload for chat conversations"""
+    contents: List[Message]  # Full conversation history
 
-# class QuestionRequest(BaseModel):
-#     question: str
+# API Endpoints
 
 @app.get("/")
-def root():
+def health_check():
+    """Health check endpoint to verify service status"""
     return {"message": "Financial Advisory Chatbot Backend is running"}
 
 @app.post("/ask")
 def ask_question(data: ChatRequest):
-    if not GEMINI_API_KEY: # check for API key
-        raise HTTPException(status_code=500, detail="Gemini API Key not set")
+    """
+    Process financial advisory questions using Google Gemini API.
+    
+    This endpoint receives conversation history, injects a specialized financial
+    advisor system prompt, and returns AI-generated financial advice.
+    
+    Args:
+        data: ChatRequest containing conversation history
+        
+    Returns:
+        dict: Response containing AI-generated financial advice
+        
+    Raises:
+        HTTPException: If API key is missing or Gemini API fails
+    """
+    # Validate that we have the required API key
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=500, 
+            detail="Gemini API Key not set. Please configure GEMINI_API_KEY environment variable."
+        )
 
     system_prompt =  """
     You are a professional, helpful, and highly knowledgeable financial advisor chatbot.
@@ -99,33 +133,53 @@ You are an expert financial advisor chatbot named "Clau". Your goal is to provid
        23. **Disclaimers**: Include disclaimers for investment advice as appropriate 
   """
 
-    # To add system prompt to the first user message
+    # Inject system prompt into the conversation
+    # This ensures Clau maintains consistent financial advisor persona
     if data.contents:
         first_user_message = next((msg for msg in data.contents if msg.role == 'user'), None)
-        if first_user_message:
-            if first_user_message.parts and first_user_message.parts[0].get('text'):
-                first_user_message.parts[0]['text'] = system_prompt + "\n" + first_user_message.parts[0]['text']
+        if first_user_message and first_user_message.parts:
+            # Prepend system prompt to the first user message
+            original_text = first_user_message.parts[0].get('text', '')
+            first_user_message.parts[0]['text'] = system_prompt + "\n" + original_text
 
-    
-    # Call for Gemini API
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    # Configure Gemini API request
+    gemini_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
     headers = {"Content-Type": "application/json"}
     
-
-
+    # Prepare payload in Gemini's expected format
     payload = {
         "contents": [msg.model_dump() for msg in data.contents]
     }
 
-
     try:
-        response = requests.post(f"{url}?key={GEMINI_API_KEY}", json=payload, headers=headers)
-        response.raise_for_status() # Raise an exception for bad status codes
+        # Make request to Gemini API with authentication
+        response = requests.post(
+            f"{gemini_url}?key={GEMINI_API_KEY}", 
+            json=payload, 
+            headers=headers,
+            timeout=30  # Prevent hanging requests
+        )
+        response.raise_for_status()  # Raise exception for HTTP errors
+        
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="Request to AI service timed out")
     except requests.exceptions.RequestException as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Log the actual error for debugging while returning user-friendly message
+        print(f"Gemini API error: {str(e)}")  # In production, use proper logging
+        raise HTTPException(status_code=502, detail="AI service temporarily unavailable")
 
-    result = response.json()
-    answer = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+    # Parse Gemini's response format
+    try:
+        result = response.json()
+        # Navigate Gemini's nested response structure
+        answer = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+        
+        if not answer:
+            raise HTTPException(status_code=502, detail="AI service returned empty response")
+            
+    except (KeyError, IndexError, ValueError) as e:
+        print(f"Response parsing error: {str(e)}")  # In production, use proper logging
+        raise HTTPException(status_code=502, detail="Invalid response from AI service")
 
     return {"answer": answer}
 
