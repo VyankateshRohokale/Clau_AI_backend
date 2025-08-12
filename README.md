@@ -25,6 +25,7 @@ A FastAPI-powered backend service that provides AI-driven financial advisory res
 
 - Python 3.8 or higher
 - pip (Python package manager)
+- Node.js (for frontend) - [Download here](https://nodejs.org/en/download)
 - Google Gemini API key
 
 ## 🚀 Quick Start
