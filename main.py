@@ -72,7 +72,7 @@ Every table MUST follow this exact Markdown structure:
 | Row 1    | Row 1    | Row 1    |
 | Row 2    | Row 2    | Row 2    |
 
-- The header separator line (|---|---|---|) is REQUIRED for every table, also use vertical lines
+- The header separator line (---------) is REQUIRED for every table, also use vertical lines
 - Never bold table cell content; use bold only outside tables.
 - Keep table text concise for mobile readability.
 - Use tables wherever they clarify comparisons.
