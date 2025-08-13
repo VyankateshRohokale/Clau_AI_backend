@@ -3,185 +3,356 @@
 """
 Clau - Financial Advisory Chatbot Backend
 
-A FastAPI-powered backend service that provides AI-driven financial advisory 
-responses using Google Gemini 2.5 Flash API. This service acts as an intermediary
-between the frontend chat interface and Google's Gemini API, adding specialized
-financial advisor prompting and response formatting.
+FastAPI backend that proxies Google Gemini 2.5 Flash with:
+- Financial domain system prompt
+- Robust retries and error handling
+- Output post-processing (table fix, strip bold in cells, line wrapping, disclaimer)
+- Lightweight category tagging + rich metadata for dashboard insights
 """
 
-# Core framework and HTTP handling
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import requests
-import os
-from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any, Tuple
+from datetime import datetime
+import os
+import time
+import re
+import requests
+from dotenv import load_dotenv
 
-# Load environment variables - API key is required for Gemini integration
+# -----------------------------
+# Environment / App bootstrap
+# -----------------------------
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
-# Initialize FastAPI application with metadata
 app = FastAPI(
     title="Clau Financial Advisory API",
     description="AI-powered financial advisory chatbot backend",
-    version="1.0.0"
+    version="1.2.0",
 )
 
-# Configure CORS to allow frontend communication
-# In production, this should be restricted to specific origins
+# CORS – tighten in production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict to specific domains in production
+    allow_origins=["*"],          # TODO: Restrict to your domains in prod
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Pydantic models for request/response validation
+# -----------------------------
+# Pydantic models
+# -----------------------------
 class Message(BaseModel):
-    """Represents a single message in the conversation history"""
-    role: str  # 'user' or 'model' (Gemini's expected format)
-    parts: List[dict]  # Message content parts
+    role: str                   # 'user' | 'model'
+    parts: List[Dict[str, Any]] # e.g., [{"text": "Hello"}]
 
 class ChatRequest(BaseModel):
-    """Request payload for chat conversations"""
-    contents: List[Message]  # Full conversation history
+    contents: List[Message]
 
-# API Endpoints
+class ChatResponse(BaseModel):
+    answer: str
+    meta: Dict[str, Any]        # category, has_disclaimer, retries, model, response_length, timestamp
 
+# -----------------------------
+# System Prompt (financial)
+# -----------------------------
+SYSTEM_PROMPT = """
+You are a professional, helpful, and highly knowledgeable financial advisor chatbot named "Clau".
+Your primary goal is to provide accurate, clear, and concise financial guidance.
+
+Mandatory Table Formatting Rule:
+Every table MUST follow this exact Markdown structure:
+| Header 1 | Header 2 | Header 3 |
+|----------|----------|----------|
+| Row 1    | Row 1    | Row 1    |
+| Row 2    | Row 2    | Row 2    |
+
+- The header separator line (|---|---|---|) is REQUIRED for every table, also use vertical lines
+- Never bold table cell content; use bold only outside tables.
+- Keep table text concise for mobile readability.
+- Use tables wherever they clarify comparisons.
+- Use Dates, Values, Percentages, and Timeframes as much possible.
+
+Responsibilities:
+1) Advise on personal finance, saving, debt, investments, retirement, college planning, and financial literacy.
+2) Explain complex topics simply; use bullets, tables, headers, and blockquotes.
+3) When answering about market trends or economic indicators, always include:
+   - The **most recent date** of the data
+   - **Exact numerical values** (percentages, dollar amounts, index points)
+   - **Relevant timeframes** (e.g., “past 6 months”, “since Jan 2024”)
+   - **Source name** (e.g., “Source: Bloomberg”)
+4) When giving investment-related advice, include this disclaimer at the end:
+5) Keep responses concise but complete; avoid greetings.
+6) Format numbers clearly: percentages, $ amounts, and timeframes.
+7) Ask for missing key inputs only when needed; do NOT repeat asks already provided.
+8) End with a bold Final Recommendation line, e.g., **Final Recommendation: Save $200 and cap wants at $300.**
+"""
+
+DISCLAIMER_TEXT = (
+    "Disclaimer: This is for informational purposes only and not professional financial advice. "
+    "Consult a certified financial planner or tax professional for personalized guidance."
+)
+
+# -----------------------------
+# Helpers: category, disclaimer
+# -----------------------------
+INVESTMENT_KEYWORDS = [
+    "stock", "stocks", "bond", "bonds", "mutual fund", "etf", "portfolio",
+    "asset allocation", "diversification", "brokerage", "retirement", "401(k)",
+    "roth", "ira", "market", "equity", "securities", "dividend"
+]
+
+CATEGORY_MAP = {
+    "personal_finance": [
+        "budget", "budgeting", "save", "saving", "debt", "loan", "rent", "groceries",
+        "emergency fund", "expense", "utilities", "credit score", "dti", "spend"
+    ],
+    "investments": INVESTMENT_KEYWORDS,
+    "financial_planning": [
+        "retirement", "401(k)", "roth", "ira", "college", "529", "pension",
+        "estate", "insurance", "planning", "goal"
+    ],
+    "financial_literacy": [
+        "compound interest", "apr", "apy", "rule of 72", "inflation", "amortization",
+        "interest rate", "depreciation"
+    ],
+    "market_trends": [
+        "cpi", "inflation", "interest rates", "fed", "gdp", "unemployment",
+        "oil prices", "market trend", "economic indicator", "yield curve", "central bank"
+    ],
+}
+
+def detect_category(text: str) -> str:
+    t = text.lower()
+    for cat, keys in CATEGORY_MAP.items():
+        if any(k in t for k in keys):
+            return cat
+    if any(k in t for k in INVESTMENT_KEYWORDS):
+        return "investments"
+    return "personal_finance"
+
+def is_investment_related(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in INVESTMENT_KEYWORDS)
+
+def ensure_disclaimer(answer: str) -> Tuple[str, bool]:
+    """
+    Append disclaimer if content appears investment-related and disclaimer not already present.
+    """
+    has = ("informational purposes only" in answer.lower()
+           and "not professional financial advice" in answer.lower())
+    if is_investment_related(answer) and not has:
+        if not answer.endswith("\n"):
+            answer += "\n"
+        answer += f"\n{DISCLAIMER_TEXT}"
+        return answer, True
+    return answer, has
+
+# -----------------------------
+# Post-processing: tables & formatting
+# -----------------------------
+TABLE_HEADER_RE = re.compile(r'^\|(.+?)\|\s*$', re.MULTILINE)
+
+def _looks_like_separator(line: str) -> bool:
+    return bool(re.match(r'^\|\s*:?-{3,}\s*(\|\s*:?-{3,}\s*)+\|?\s*$', line.strip()))
+
+def fix_markdown_tables(text: str) -> str:
+    """
+    Ensure any markdown table header line is followed by a separator line like:
+    |-----|-----|-----|
+    Only inserts if the immediate next non-empty line is not already a valid separator.
+    """
+    lines = text.splitlines()
+    out = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        if '|' in line.strip() and TABLE_HEADER_RE.match(line.strip()):
+            j = i + 1
+            while j < len(lines) and lines[j].strip() == "":
+                out.append(lines[j])
+                j += 1
+            if j < len(lines):
+                next_line = lines[j]
+                if not _looks_like_separator(next_line):
+                    cols = [c.strip() for c in line.strip().split('|') if c.strip() != '']
+                    if cols:
+                        sep = "|" + "|".join(["----------"] * len(cols)) + "|"
+                        out.append(sep)
+            else:
+                cols = [c.strip() for c in line.strip().split('|') if c.strip() != '']
+                if cols:
+                    sep = "|" + "|".join(["----------"] * len(cols)) + "|"
+                    out.append(sep)
+        i += 1
+    return "\n".join(out)
+
+BOLD_IN_CELL_RE = re.compile(r'(\|[^|\n]*?)\*\*(.+?)\*\*([^|\n]*?\|)')
+
+def strip_bold_inside_table_cells(text: str) -> str:
+    """
+    Remove **bold** inside table rows (leaves normal text), preserving outside-table bold.
+    """
+    def _replace_line(line: str) -> str:
+        # Don't modify header-separator lines
+        if _looks_like_separator(line):
+            return line
+        # Replace all bold segments inside cell content for the line
+        new_line = line
+        while True:
+            m = BOLD_IN_CELL_RE.search(new_line)
+            if not m:
+                break
+            new_line = new_line[:m.start()] + m.group(1) + m.group(2) + m.group(3) + new_line[m.end():]
+        return new_line
+
+    lines = text.splitlines()
+    for idx, line in enumerate(lines):
+        if line.strip().startswith("|"):
+            lines[idx] = _replace_line(line)
+    return "\n".join(lines)
+
+def soft_wrap_lines(text: str, max_len: int = 109) -> str:
+    """
+    Soft-wrap lines to <= max_len chars, skipping:
+    - table lines (start with '|')
+    - table separator lines
+    - code fences and content within ``` blocks
+    - URLs (lines containing 'http'/'https')
+    - blockquote lines (start with '>')
+    """
+    out = []
+    in_code = False
+    for line in text.splitlines():
+        striped = line.strip()
+        if striped.startswith("```"):
+            out.append(line)
+            in_code = not in_code
+            continue
+        if in_code or striped.startswith("|") or _looks_like_separator(line) or striped.startswith(">"):
+            out.append(line)
+            continue
+        if "http://" in line or "https://" in line:
+            out.append(line)
+            continue
+
+        if len(line) <= max_len:
+            out.append(line)
+            continue
+
+        # wrap by words
+        words = line.split(" ")
+        cur = ""
+        for w in words:
+            if len(cur) + (1 if cur else 0) + len(w) <= max_len:
+                cur = w if not cur else f"{cur} {w}"
+            else:
+                out.append(cur)
+                cur = w
+        if cur:
+            out.append(cur)
+    return "\n".join(out)
+
+# -----------------------------
+# Gemini call with retries
+# -----------------------------
+def call_gemini(payload: Dict[str, Any], max_retries: int = 3, base_delay: float = 0.8) -> Dict[str, Any]:
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured")
+
+    headers = {"Content-Type": "application/json"}
+    last_err_text = ""
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.post(
+                f"{GEMINI_URL}?key={GEMINI_API_KEY}",
+                json=payload,
+                headers=headers,
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                return {"json": resp.json(), "retries": attempt - 1}
+            if resp.status_code in (429, 500, 502, 503, 504):
+                last_err_text = resp.text
+                time.sleep(base_delay * (2 ** (attempt - 1)))
+                continue
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        except requests.exceptions.Timeout:
+            if attempt == max_retries:
+                raise HTTPException(status_code=504, detail="Request to AI service timed out")
+            time.sleep(base_delay * (2 ** (attempt - 1)))
+        except requests.exceptions.RequestException:
+            if attempt == max_retries:
+                raise HTTPException(status_code=502, detail="AI service temporarily unavailable")
+            time.sleep(base_delay * (2 ** (attempt - 1)))
+    raise HTTPException(status_code=502, detail=last_err_text or "AI service temporarily unavailable")
+
+# -----------------------------
+# Routes
+# -----------------------------
 @app.get("/")
 def health_check():
-    """Health check endpoint to verify service status"""
     return {"message": "Financial Advisory Chatbot Backend is running"}
 
-@app.post("/ask")
+@app.post("/ask", response_model=ChatResponse)
 def ask_question(data: ChatRequest):
     """
-    Process financial advisory questions using Google Gemini API.
-    
-    This endpoint receives conversation history, injects a specialized financial
-    advisor system prompt, and returns AI-generated financial advice.
-    
-    Args:
-        data: ChatRequest containing conversation history
-        
-    Returns:
-        dict: Response containing AI-generated financial advice
-        
-    Raises:
-        HTTPException: If API key is missing or Gemini API fails
+    Process financial advisory questions using Google Gemini API with:
+    - system prompt injection   
+    - retries
+    - table/disclaimer/bold-in-cell/line-wrap post-processing
+    - category tagging and rich metadata
     """
-    # Validate that we have the required API key
-    if not GEMINI_API_KEY:
-        raise HTTPException(
-            status_code=500, 
-            detail="Gemini API Key not set. Please configure GEMINI_API_KEY environment variable."
-        )
+    if not data.contents:
+        raise HTTPException(status_code=400, detail="contents cannot be empty")
 
-    system_prompt =  """
-    You are a professional, helpful, and highly knowledgeable financial advisor chatbot.
-    Your primary goal is to provide accurate and accessible information on personal finance, investments, and financial planning.
-    
-    *Instructions:*
+    # Inject system prompt by prepending it to the first user message
+    first_user = next((m for m in data.contents if m.role.lower() == "user"), None)
+    if first_user and first_user.parts and isinstance(first_user.parts[0], dict):
+        original = first_user.parts[0].get("text", "")
+        first_user.parts[0]["text"] = f"{SYSTEM_PROMPT}\n\nUser question:\n{original}"
 
-You are an expert financial advisor chatbot named "Clau". Your goal is to provide clear, accurate, and concise financial guidance.
-      
-    Your responsibilities include:
-       1.  **Financial Advice:** Respond to user questions about personal finance (budgeting, saving, debt), investments (stocks, bonds, mutual funds, retirement), financial planning (college, retirement), and financial literacy (explaining concepts like compound interest, APR).
-       2.  **Clarity:** Explain complex financial concepts in simple, easy-to-understand language. Use analogies when helpful.
-       3.  **Accuracy and Formatting:** Ensure all information is factually correct. When providing numerical data (e.g., percentages, dollar amounts, timeframes), format it clearly.
-       4.  **Disclaimers:** For any investment-related advice, you must include a short disclaimer stating that this is for informational purposes only and not to be taken as professional financial advice.
-       5.  **Conciseness:** Keep your responses to the point, comprehensive, and focused on directly answering the user's question without unnecessary conversational fluff.
-       6.  **Proactive Guidance:** If a user's question requires specific financial data you don't have (e.g., income, monthly expenses, existing budget), you must proactively ask for that information to provide a more personalized response. Do not tell the user to calculate things themselves. Instead, guide them by asking for the missing pieces of information.
-       7.  **Direct Recommendations:** If you have sufficient information from the user (such as income and expenses) to make a reasonable suggestion for a specific event (like a party), you MUST provide a direct spending recommendation or range. For example, if a user's only significant expense is rent and all other expenses are covered, you can suggest a specific spending amount for a night out (e.g., "$400") and a max limit, while also recommending a portion be saved. The final recommendation should be a concrete amount or range that directly answers the user's immediate question.
-       8.  **Avoid Redundancy:** Do not ask for information that has already been provided to you. If the user has already stated their income and expenses, do not ask for it again.
-       9.  **Conclusion:** Always give a conclusion at the end related to the main topic.
-       10. Don't give much of information , keep it simple.
-       11. No need of greeting at the start.
-       12. **Final Answer Format:** After providing the main body of your response, provide a final, clear, and direct recommendation on a new line, in bold, for example: '**Final Recommendation: Spend up to $600 tonight.**'
-       13. **Rich Formatting:** Use markdown extensively - create tables, bullet points, numbered lists, headers (##, ###), and cards/boxes for better visual presentation. Structure complex information using:
-           - **Tables** for comparisons (| Column 1 | Column 2 |)
-           - **Headers** for sections (## Budget Breakdown, ### Investment Options)
-           - **Bullet points** for lists and key points
-           - **Bold text** for important numbers and terms
-           - **Code blocks** for calculations or formulas
-           - **Blockquotes** (>) for important tips or warnings
-    
-    User question:   
+    payload = {"contents": [m.model_dump() for m in data.contents]}
 
-       14.  *Always be helpful and polite.*
-       15. **if user is rude , still reply calmly and politely**
-       16.  *Provide accurate, factual information.* Do not hallucinate data.
-       17.  *Explain complex concepts simply.* Use analogies and bullet points to make information easy to understand.
-       18.  *Format responses clearly.* Use bolding for key terms, percentages, and dollar amounts.
-       19.  **Visual Structure:** When providing financial advice, organize information in card-like sections:
-           ```
-           Budget Breakdown
-           | Category | Amount | Percentage |
-           |----------|--------|------------|
-           | Housing  | $1,200 | 40%        |
-           | Food     | $400   | 13%        |
-           
-           ```
-       20. **Table Formatting Rules:** When creating tables:
-           - Do NOT use bold formatting (**text**) inside table cells
-           - Use SHORT, concise words in table cells to fit mobile screens
-           - Abbreviate long descriptions (e.g., "Transportation" → "Transport", "Entertainment & Social" → "Entertainment")
-       21. **If using tables , use '|' to differ the rows**
-       20.  *Include a disclaimer for investment advice.* For any investment-related question, end the response with: "Disclaimer: This is for informational purposes only and not professional financial advice. Consult a certified financial planner or tax professional for personalized guidance."
-       21.  *Handle non-financial queries gracefully.* Politely state that you are a financial assistant and can only answer questions related to finance.
-       22.  *Respond to numerical questions with relevant data.* For example, when asked about a debt-to-income ratio, provide the generally accepted "good" range.
-       23. **Disclaimers**: Include disclaimers for investment advice as appropriate 
-  """
+    result = call_gemini(payload)
+    retries_used = result["retries"]
+    raw = result["json"]
 
-    # Inject system prompt into the conversation
-    # This ensures Clau maintains consistent financial advisor persona
-    if data.contents:
-        first_user_message = next((msg for msg in data.contents if msg.role == 'user'), None)
-        if first_user_message and first_user_message.parts:
-            # Prepend system prompt to the first user message
-            original_text = first_user_message.parts[0].get('text', '')
-            first_user_message.parts[0]['text'] = system_prompt + "\n" + original_text
-
-    # Configure Gemini API request
-    gemini_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
-    headers = {"Content-Type": "application/json"}
-    
-    # Prepare payload in Gemini's expected format
-    payload = {
-        "contents": [msg.model_dump() for msg in data.contents]
-    }
-
+    # Parse Gemini response
     try:
-        # Make request to Gemini API with authentication
-        response = requests.post(
-            f"{gemini_url}?key={GEMINI_API_KEY}", 
-            json=payload, 
-            headers=headers,
-            timeout=30  # Prevent hanging requests
-        )
-        response.raise_for_status()  # Raise exception for HTTP errors
-        
-    except requests.exceptions.Timeout:
-        raise HTTPException(status_code=504, detail="Request to AI service timed out")
-    except requests.exceptions.RequestException as e:
-        # Log the actual error for debugging while returning user-friendly message
-        print(f"Gemini API error: {str(e)}")  # In production, use proper logging
-        raise HTTPException(status_code=502, detail="AI service temporarily unavailable")
-
-    # Parse Gemini's response format
-    try:
-        result = response.json()
-        # Navigate Gemini's nested response structure
-        answer = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-        
-        if not answer:
-            raise HTTPException(status_code=502, detail="AI service returned empty response")
-            
-    except (KeyError, IndexError, ValueError) as e:
-        print(f"Response parsing error: {str(e)}")  # In production, use proper logging
+        text = raw.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+    except Exception:
         raise HTTPException(status_code=502, detail="Invalid response from AI service")
 
-    return {"answer": answer}
+    if not text:
+        raise HTTPException(status_code=502, detail="AI service returned empty response")
+
+    # Post-processing pipeline
+    text = fix_markdown_tables(text)
+    text = strip_bold_inside_table_cells(text)
+    text = soft_wrap_lines(text, max_len=109)
+    text, has_disclaimer = ensure_disclaimer(text)
+
+    # Category tagging for dashboard (prefer user message for intent)
+    user_text = ""
+    if first_user and first_user.parts and isinstance(first_user.parts[0], dict):
+        user_text = first_user.parts[0].get("text", "")
+    category = detect_category(user_text or text)
+
+    # Meta for dashboard/insights
+    meta = {
+        "category": category,
+        "has_disclaimer": has_disclaimer,
+        "retries": retries_used,
+        "model": GEMINI_MODEL,
+        "response_length": len(text),
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+
+    return ChatResponse(answer=text, meta=meta)
