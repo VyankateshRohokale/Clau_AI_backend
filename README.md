@@ -135,12 +135,18 @@ The backend is deployed on Render and automatically handles:
 
 ```
 Clau_AI_backend/
-├── main.py              # FastAPI application
-├── requirements.txt     # Python dependencies
-├── runtime.txt         # Python version specification
-├── .env.example        # Environment template
-├── .env               # Environment variables (not in repo)
-└── .gitignore         # Git ignore rules
+├── main.py                  # FastAPI application
+├── requirements.txt         # Python dependencies
+├── requirements-test.txt    # Testing dependencies
+├── test_main.py            # Comprehensive test suite
+├── runtime.txt             # Python version specification
+├── API_DOCUMENTATION.md    # Detailed API reference
+├── ARCHITECTURE.md         # System architecture guide
+├── DEPLOYMENT.md           # Deployment instructions
+├── PROMPT_ENGINEERING.md   # AI prompt optimization guide
+├── .env.example            # Environment template
+├── .env                   # Environment variables (not in repo)
+└── .gitignore             # Git ignore rules
 ```
 
 ## 🎯 AI Persona
@@ -168,6 +174,13 @@ pytest test_main.py::test_ask_success -v
 # Run tests with coverage
 pytest test_main.py --cov=main
 ```
+
+### Test Coverage
+- Health check endpoint validation
+- Chat API request/response handling
+- Error handling and edge cases
+- Gemini API integration testing
+- Input validation and sanitization
 
 ## 📋 Sample Financial Questions Test Suite
 
@@ -208,6 +221,15 @@ The chatbot handles these assessment questions effectively:
 - Verify responses include tables, headers, and **Final Recommendation** format
 - Check for appropriate disclaimers on investment advice
 - See `TEST_SUITE.md` for detailed test cases and expected responses
+
+## 📚 Documentation
+
+Comprehensive documentation is available in separate files:
+
+- **[API_DOCUMENTATION.md](API_DOCUMENTATION.md)**: Complete API reference with examples
+- **[ARCHITECTURE.md](ARCHITECTURE.md)**: System design and data flow
+- **[DEPLOYMENT.md](DEPLOYMENT.md)**: Production deployment guide
+- **[PROMPT_ENGINEERING.md](PROMPT_ENGINEERING.md)**: AI prompt optimization techniques
 
 ## 🛠️ Development Decisions & Challenges Overcome
 
